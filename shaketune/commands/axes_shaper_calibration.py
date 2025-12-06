@@ -44,12 +44,12 @@ def axes_shaper_calibration(gcmd, klipper_config, st_process: ShakeTuneProcess) 
     feedrate_travel = gcmd.get_float('TRAVEL_SPEED', default=120.0, minval=20.0)
     z_height = gcmd.get_float('Z_HEIGHT', default=None, minval=1)
     max_scale = gcmd.get_int('MAX_SCALE', default=None, minval=1)
-    accel_chip = gcmd.get('ACCEL_CHIP', default=None)
+    accel_chips = gcmd.get('ACCEL_CHIP', default=None)
 
     if accel_per_hz == '':
         accel_per_hz = None
-    if accel_chip == '':
-        accel_chip = None
+    if accel_chips == '':
+        accel_chips = None
 
     if accel_per_hz is None:
         accel_per_hz = default_accel_per_hz
@@ -111,20 +111,39 @@ def axes_shaper_calibration(gcmd, klipper_config, st_process: ShakeTuneProcess) 
         toolhead.dwell(0.5)
         toolhead.wait_moves()
 
-        # First we need to find the accelerometer chip suited for the axis (if not provided by the user)
-        current_accel_chip = accel_chip  # Use manually specified chip if provided
-        if current_accel_chip is None:
-            current_accel_chip = Accelerometer.find_axis_accelerometer(printer, config['axis'])
-        if current_accel_chip is None:
-            raise gcmd.error('No suitable accelerometer found for measurement!')
-        k_accelerometer = printer.lookup_object(current_accel_chip, None)
-        if k_accelerometer is None:
-            raise gcmd.error(f'Accelerometer chip "{current_accel_chip}" not found!')
-        accelerometer = Accelerometer(k_accelerometer, printer.get_reactor())
+        # Find one/multiple accelerometers if provided by user 
+        accelerometers = []
+        for accel_chip in accel_chips.split(','):
+            current_accel_chip = accel_chip  # Use manually specified chip if provided
+            k_accelerometer = printer.lookup_object(current_accel_chip, None)
+            if k_accelerometer is None:
+                current_accel_chip = 'adxl345 '+accel_chip
+            k_accelerometer = printer.lookup_object(current_accel_chip, None)
+            if k_accelerometer is None:
+                raise gcmd.error(f'Accelerometer chip "{current_accel_chip}" / "{accel_chip}" not found!')          
+            accelerometer = Accelerometer(k_accelerometer, printer.get_reactor())
+            accelerometers.append(accelerometer)
+        # Find accelerometer if not provided by the user
+        if not accelerometers:
+            current_accel_chip = accel_chips  # Use manually specified chip if provided
+            if current_accel_chip is None:
+                current_accel_chip = Accelerometer.find_axis_accelerometer(printer, config['axis'])
+            if current_accel_chip is None:
+                raise gcmd.error('No suitable accelerometer found for measurement!')
+            accel_chip = current_accel_chip
+            k_accelerometer = printer.lookup_object(current_accel_chip, None)            
+            if k_accelerometer is None:
+                current_accel_chip = 'adxl345 '+accel_chip
+            k_accelerometer = printer.lookup_object(current_accel_chip, None)
+            if k_accelerometer is None:
+                raise gcmd.error(f'Accelerometer chip "{current_accel_chip}" / "{accel_chip}" not found!')    
+            accelerometer = Accelerometer(k_accelerometer, printer.get_reactor())
+            accelerometers.append(accelerometer)
 
         # Then do the actual measurements
         ConsoleOutput.print(f'Measuring {config["label"]}...')
-        accelerometer.start_recording(measurements_manager, name=config['label'], append_time=True)
+        for accelerometer in accelerometers:
+            accelerometer.start_recording(measurements_manager, name=config['label'], append_time=True)
         test_params = vibrate_axis(
             toolhead,
             gcode,
@@ -136,7 +155,8 @@ def axes_shaper_calibration(gcmd, klipper_config, st_process: ShakeTuneProcess) 
             res_tester,
             klipper_config,
         )
-        accelerometer.stop_recording()
+        for accelerometer in accelerometers:
+            accelerometer.stop_recording()
         toolhead.dwell(0.5)
         toolhead.wait_moves()
 
